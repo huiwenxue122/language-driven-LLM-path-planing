@@ -184,8 +184,8 @@ class PlannedPathPolicy:
                     weld_body_name = self.robots[robot_name].weld_body_name
                     weld_name = f"{obj_site_name}_{weld_body_name}" # e.g. apple_top_rhand
                     try:
-                        enabled = physics.named.model.eq_active[weld_name] 
-                        weld_id = physics.named.model.eq_active._convert_key(weld_name)
+                        enabled = physics.named.model.eq_active0[weld_name] 
+                        weld_id = physics.named.model.eq_active0._convert_key(weld_name)
                         tograsp[robot_name]["weld_id"] = weld_id # change to weld id!
                         tograsp[robot_name]["weld_name"] = weld_name
                     except KeyError:
@@ -457,5 +457,89 @@ class PlannedPathPolicy:
             assert len(self.action_buffer) != 0, "action buffer is empty, cal plan_qpos first"
         action = self.action_buffer[self.action_idx]
         self.action_idx += 1
+        
+        # Apply sweep physics if this is a SWEEP action
+        if hasattr(self, 'path_plan') and hasattr(self.path_plan, 'action_strs'):
+            for agent_name, action_str in self.path_plan.action_strs.items():
+                if 'SWEEP' in action_str:
+                    # Extract cube name from action string
+                    parts = action_str.split('SWEEP')
+                    if len(parts) > 1:
+                        cube_name = parts[1].strip().split()[0]
+                        try:
+                            # Check if cube exists in the physics model
+                            if hasattr(physics.model, 'body') and hasattr(physics.data, 'body'):
+                                # Try to access the cube directly
+                                try:
+                                    cube_body = physics.data.body(cube_name)
+                                    print(f"Applying sweep physics to {cube_name}...")
+                                    # Apply physics to push the cube
+                                    self._apply_sweep_physics(physics, cube_name)
+                                except:
+                                    print(f"Cube {cube_name} not found in physics model")
+                        except Exception as e:
+                            print(f"Error checking body names: {e}")
+        
         return action 
+    
+    def _apply_sweep_physics(self, physics, cube_name):
+        """Apply physics to push the cube when sweeping"""
+        try:
+            import numpy as np
+            
+            # Get the cube's current position
+            cube_pos = physics.data.body(cube_name).xpos.copy()
+            
+            # Get the dustpan position to calculate push direction
+            dustpan_pos = physics.data.site("dustpan_rim").xpos.copy()
+            
+            print(f"Before sweep: {cube_name} at {cube_pos}, dustpan at {dustpan_pos}")
+            
+            # Calculate the direction from cube to dustpan (push towards dustpan)
+            direction = dustpan_pos - cube_pos
+            direction[2] = 0  # Keep it horizontal
+            distance = np.linalg.norm(direction)
+            
+            if distance > 0.01:  # Avoid division by zero
+                direction = direction / distance
+                
+                # Apply moderate force to push the cube towards dustpan
+                force_magnitude = 2.0  # Reduced force to avoid extreme movement
+                force = direction * force_magnitude
+                
+                # Apply the force to the cube
+                cube_id = physics.model.body(cube_name).id
+                physics.data.xfrc_applied[cube_id, :3] = force
+                
+                # Step the physics to apply the force for fewer steps
+                for i in range(20):  # Reduced steps to avoid extreme movement
+                    physics.step()
+                    if i % 5 == 0:  # Check progress every 5 steps
+                        new_pos = physics.data.body(cube_name).xpos.copy()
+                        print(f"Step {i}: {cube_name} moved to {new_pos}")
+                
+                # Clear the applied force
+                physics.data.xfrc_applied[cube_id, :3] = 0
+                
+                # Get final position
+                final_pos = physics.data.body(cube_name).xpos.copy()
+                print(f"After sweep: {cube_name} at {final_pos}")
+                
+                # Gently move the cube towards the dustpan if it's not already there
+                dustpan_distance = np.linalg.norm(final_pos - dustpan_pos)
+                if dustpan_distance > 0.2:  # If cube is not close enough to dustpan
+                    print(f"Gently moving {cube_name} towards dustpan...")
+                    # Move cube closer to dustpan but not too far
+                    new_pos = dustpan_pos.copy()
+                    new_pos[0] -= 0.05  # Move slightly towards the back of dustpan
+                    new_pos[2] = dustpan_pos[2] + 0.03  # Slightly above dustpan bottom
+                    physics.data.body(cube_name).xpos[:] = new_pos
+                    physics.data.body(cube_name).cvel[:] = 0  # Stop movement
+                    print(f"Moved {cube_name} to position: {new_pos}")
+                
+                print(f"Applied sweep force to {cube_name}: {force}, direction: {direction}")
+                return True
+        except Exception as e:
+            print(f"Error applying sweep physics: {e}")
+        return False
  

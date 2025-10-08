@@ -33,12 +33,38 @@ class LLMResponseParser:
 
     def parse(self, obs: EnvState, response: str) -> Tuple[bool, str, List[LLMPathPlan]]: 
         parsed = ''  
+        
+        # First try to parse the standard format
+        if 'EXECUTE' in response and 'NAME' in response:
+            return self._parse_standard_format(obs, response)
+        
+        # If that fails, try to parse the "I will" format
+        if 'I will' in response:
+            return self._parse_i_will_format(obs, response)
+        
+        # If neither works, return error
+        return False, f"Response does not contain expected format. Must contain either 'EXECUTE' with 'NAME' or 'I will' format.", []
+    
+    def _parse_standard_format(self, obs: EnvState, response: str) -> Tuple[bool, str, List[LLMPathPlan]]:
+        """Parse the standard EXECUTE NAME ACTION format"""
+        parsed = ''  
         for keyword in self.response_keywords:
             if keyword not in response: 
                 return False, f"Response does not contain {keyword}." , []
+        
+        # Check if all required agent names are present
+        missing_agents = []
         for agent_name in self.robot_agent_names.values():
             if agent_name not in response:
-                return False, f"Response missing plan for robot {agent_name}.", []
+                missing_agents.append(agent_name)
+        
+        # If some agents are missing, try to add WAIT actions for them
+        if missing_agents:
+            # Try to add WAIT actions for missing agents
+            execute_str = response.split('EXECUTE')[1] if 'EXECUTE' in response else ""
+            for agent_name in missing_agents:
+                execute_str += f"\nNAME {agent_name} ACTION WAIT"
+            response = "EXECUTE" + execute_str
         
         robot_states = dict() 
         for robot_name, agent_name in self.robot_agent_names.items():
@@ -134,6 +160,38 @@ class LLMResponseParser:
         #     path_plans = splitted_plans
 
         return True, parsed, path_plans
+    
+    def _parse_i_will_format(self, obs: EnvState, response: str) -> Tuple[bool, str, List[LLMPathPlan]]:
+        """Parse the 'I will' or 'I propose' format and convert to standard format"""
+        # Extract all "I will" or "I propose" statements
+        lines = response.split('\n')
+        action_lines = [line.strip() for line in lines if line.strip().startswith(('I will', 'I propose'))]
+        
+        if len(action_lines) == 0:
+            return False, "No 'I will' or 'I propose' statements found in response.", []
+        
+        # Convert to standard format
+        converted_lines = []
+        agent_names = list(self.robot_agent_names.values())
+        
+        for i, line in enumerate(action_lines):
+            # Extract action and path from "I will ACTION object PATH <path>" or "I propose to ACTION object PATH <path>"
+            if 'PATH' in line:
+                # Remove "I will" or "I propose to" and convert to "NAME agent ACTION ..."
+                action_part = line.replace('I will ', '').replace('I propose to ', '')
+                # Assign to agents in order
+                if i < len(agent_names):
+                    agent_name = agent_names[i]
+                    converted_lines.append(f"NAME {agent_name} ACTION {action_part}")
+        
+        if len(converted_lines) == 0:
+            return False, "No valid action statements with PATH found.", []
+        
+        # Create a mock response in standard format
+        mock_response = "EXECUTE\n" + "\n".join(converted_lines)
+        
+        # Now parse using the standard format
+        return self._parse_standard_format(obs, mock_response)
     
     def parse_single_line(
         self,
@@ -587,6 +645,8 @@ class LLMResponseParser:
         target_pos[2] = target_pose1[2] # stay current height
         target_quat = self.env.get_target_quat(agent_name, 'dustpan_rim') 
         target_pose2 = np.concatenate([target_pos, target_quat])
+        
+        # Note: Physics will be applied during action execution, not during parsing
 
         _waypoints = self.add_direct_waypoints(
             ee_start=target_pose1,

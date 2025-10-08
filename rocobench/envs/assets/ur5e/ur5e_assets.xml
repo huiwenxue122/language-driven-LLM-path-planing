@@ -23,8 +23,8 @@
       <position kp="3500" forcerange="-150 150"/>
       <default class="size3_limited">
       <!-- NOTE(Mandi): temp change 3.1415 into 2.1415 -->
-        <joint range="-3.1415 2.1415"/> 
-        <position ctrlrange="-3.1415 2.1415"/>
+        <joint range="-6.0 6.0"/> 
+        <position ctrlrange="-6.0 6.0"/>
       </default>
     </default>
     <default class="size1">

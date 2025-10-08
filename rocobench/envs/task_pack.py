@@ -47,14 +47,18 @@ They choose objects closest to their grippers. At each round, they are given [Sc
 
 PACK_ACTION_SPACE="""
 [Action Options]
-1) PICK <obj> PATH <path>: only PICK if your gripper is empty;
-2) PLACE <obj> bin PATH <path>: only if you have already PICKed the object, you can PLACE it into an empty bin slot, do NOT PLACE if another object is already in a slot!
+1) PICK <obj> PATH <path>: only PICK if your gripper is empty and you are not already holding an object;
+2) PLACE <obj> bin PATH <path>: only if you have already PICKed the object and are currently holding it, you can PLACE it into an empty bin slot, do NOT PLACE if another object is already in a slot!
+
+IMPORTANT: You can only PLACE an object that you are currently holding. You cannot PLACE an object that you have not PICKed first.
 
 Each <path> must contain exactly four <coord>s that smoothly interpolate between start and goal, coordinates must be evenly distanced from each other.
 The robot PATHs must efficiently reach target while avoiding collision avoid collision (e.g. move above the objects' heights).
-The PATHs must do top-down pick or place: 
+The PATHs must do top-down pick or place with intermediate waypoints to avoid IK failures: 
 - move directly atop an object by height 0.2 before PICK: e.g. Alice's gripper is at (0, 0, 0.3), banana is at (-0.25, 0.39, 0.29): NAME Alice ACTION PICK banana PATH [(0, 0.1, 0.3),(0, 0.2, 0.49),(-0.1, 0.25, 0.49),(-0.25, 0.39, 0.49)]
 - lift an object vertically up before moving it to PLACE: e.g. Bob's gripper is at (0.9, 0, 0.2), bin_front_left is at (0.35, 0.35, 0.43): NAME Bob ACTION PLACE apple bin_front_left PATH [(0.9,0.0,0.5), (0.5, 0, 0.5), (0.2, 0.1, 0.5),(0.35, 0.35, 0.5)]
+
+IMPORTANT: Always include intermediate waypoints to avoid IK failures. Move in small steps rather than directly to the target.
 
 [Action Output Instruction]
 First output 'EXECUTE\n', then give exactly one ACTION per robot, each on a new line.
@@ -62,7 +66,12 @@ Example: 'EXECUTE\nNAME Alice ACTION PICK apple PATH <path>\nNAME Bob ACTION PLA
 """
 
 PACK_CHAT_PROMPT="""Robots discuss to find the best strategy and path. When each robot talk, it first reflects on the task status and its own capability. 
-Carefully consider [Environment Feedback]. Coordinate with others to plan and improve paths following the instructions. They talk in order [Alice],[Bob],[Alice],..., then, after they agreed, plan exactly one ACTION per robot, output an EXECUTE to summarize the plan and stop talking.
+Carefully consider [Environment Feedback]. Coordinate with others to plan and improve paths following the instructions. They talk in order [Alice],[Bob],[Alice],..., then, after they agreed, plan exactly one ACTION per robot for BOTH robots (Alice and Bob), output an EXECUTE to summarize the plan and stop talking. 
+
+CRITICAL REQUIREMENT: The final EXECUTE plan must include exactly one action for Alice AND exactly one action for Bob. Both robots must have actions in the final plan. Do not output EXECUTE until both robots have agreed on their actions.
+
+COORDINATION RULE: Choose DIFFERENT objects to avoid conflicts. If one robot picks an object, the other should pick a different object. If one robot places in a bin slot, the other should use a different slot.
+
 Their discussion and the final plan: """
 
 class PackGroceryTask(MujocoSimEnv):
@@ -390,13 +399,35 @@ You see the following objects:
 {robot_desp}
 Your gripper must move higher than these objects and higher than table height {table_height:.2f}, but move lower than 0.8.
 Never forget you are {agent_name}!
+
+CURRENT STATUS: You are holding nothing, so you can only PICK objects. You cannot PLACE anything until you have PICKed an object first.
+
 Think step-by-step about the task and {other_robot}'s response. Carefully check and correct {other_robot} if they made a mistake. 
 Discuss with {other_robot} to come up with the best plan and smooth, collision-free paths. 
 Improve your paths if given [Environment Feedback], choose a different object or target slot if needed.
 
 When you respond, tell {other_robot} about your status. Respond very concisely but informatively, and do not repeat what others have said.
 Propose exactly one action for yourself at the **current** round, select from [Action Options].
-End your response by either: 1) output PROCEED, if the plans require further discussion; 2) If everyone has made proposals and got approved, output the final plan, must strictly follow [Action Output Instruction] and [Path Plan Instruction].
+
+IMPORTANT: Choose DIFFERENT objects than {other_robot} to avoid conflicts. If {other_robot} is picking an object, choose a different one. If {other_robot} is placing in a bin slot, choose a different slot.
+
+PATH PLANNING GUIDELINES:
+- Choose objects that are closer to your current position to avoid IK failures
+- Alice should prefer objects on the left side of the table (negative x coordinates)
+- Bob should prefer objects on the right side of the table (positive x coordinates)
+- Avoid extreme positions that may cause IK failures
+- Use shorter, more direct paths with fewer waypoints
+- Avoid high z-coordinates (above 0.8) that may cause IK failures
+- Choose objects that are within your robot's reachable workspace
+- CRITICAL: Avoid positions with y > 0.8 or y < 0.1 as they cause IK failures
+- CRITICAL: Keep z-coordinates between 0.3 and 0.6 to avoid IK failures
+- CRITICAL: Use intermediate waypoints to gradually approach targets
+- CRITICAL: Start from current gripper position and move in small steps
+- CRITICAL: Avoid extreme x-coordinates (keep between -0.5 and 0.5)
+
+End your response by either: 1) output PROCEED, if the plans require further discussion; 2) If everyone has made proposals and got approved, output the final plan with actions for BOTH robots (Alice and Bob), must strictly follow [Action Output Instruction] and [Path Plan Instruction]. 
+
+CRITICAL: The final plan must include exactly one action for Alice and one action for Bob. Do not output EXECUTE until both robots have agreed on their actions.
 """
         return agent_prompt
     

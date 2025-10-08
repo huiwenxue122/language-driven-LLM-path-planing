@@ -15,7 +15,8 @@ from .parser import LLMResponseParser
 
 assert os.path.exists("openai_key.json"), "Please put your OpenAI API key in a string in robot-collab/openai_key.json"
 OPENAI_KEY = str(json.load(open("openai_key.json")))
-openai.api_key = OPENAI_KEY
+# Initialize OpenAI client for v2.x
+openai_client = openai.OpenAI(api_key=OPENAI_KEY)
 
 PATH_PLAN_INSTRUCTION="""
 [Path Plan Instruction]
@@ -51,7 +52,7 @@ class DialogPrompter:
         use_history: bool = True,  
         use_feedback: bool = True,
         temperature: float = 0,
-        llm_source: str = "gpt-4"
+        llm_source: str = "gpt-5-mini"
     ):
         self.max_tokens = max_tokens
         self.debug_mode = debug_mode
@@ -70,7 +71,8 @@ class DialogPrompter:
         self.max_calls_per_round = max_calls_per_round 
         self.temperature = temperature
         self.llm_source = llm_source
-        assert llm_source in ["gpt-4", "gpt-3.5-turbo", "claude"], f"llm_source must be one of [gpt4, gpt-3.5-turbo, claude], got {llm_source}"
+        assert llm_source in ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1",
+                      "gpt4", "gpt-4", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "claude", "claude-3-opus", "claude-3-sonnet"], f"llm_source must be one of [gpt-5, gpt-5-mini, gpt-5-nano, gpt-4.1, gpt4, gpt-4, gpt-4o, gpt-4-turbo, gpt-3.5-turbo, claude, claude-3-opus, claude-3-sonnet], got {llm_source}"
 
     def compose_system_prompt(
         self, 
@@ -203,6 +205,13 @@ Your response is:
                     max_query=3,
                     )
                 
+                # Convert usage object to dict for JSON serialization
+                usage_dict = {
+                    'completion_tokens': usage.completion_tokens,
+                    'prompt_tokens': usage.prompt_tokens,
+                    'total_tokens': usage.total_tokens
+                }
+                
                 tosave = [ 
                     {
                         "sender": "SystemPrompt",
@@ -216,7 +225,7 @@ Your response is:
                         "sender": agent_name,
                         "message": response,
                     },
-                    usage,
+                    usage_dict,
                 ]
                 timestamp = datetime.now().strftime("%m%d-%H%M")
                 fname = f'{save_path}/replan{replan_idx}_call{n_calls}_agent{agent_name}_{timestamp}.json'
@@ -224,14 +233,27 @@ Your response is:
 
                 num_responses[agent_name] += 1
                 # strip all the repeated \n and blank spaces in response: 
-                pruned_response = response.strip()
-                # pruned_response = pruned_response.replace("\n", " ")
-                agent_responses.append(
-                    f"[{agent_name}]:\n{pruned_response}"
-                    )
-                usages.append(usage)
+                if response is not None:
+                    pruned_response = response.strip()
+                    # pruned_response = pruned_response.replace("\n", " ")
+                    agent_responses.append(
+                        f"[{agent_name}]:\n{pruned_response}"
+                        )
+                else:
+                    # Handle case where API calls failed and response is None
+                    pruned_response = "API call failed - no response received"
+                    agent_responses.append(
+                        f"[{agent_name}]:\n{pruned_response}"
+                        )
+                # Convert usage object to dict for JSON serialization
+                usage_dict = {
+                    'completion_tokens': usage.completion_tokens,
+                    'prompt_tokens': usage.prompt_tokens,
+                    'total_tokens': usage.total_tokens
+                }
+                usages.append(usage_dict)
                 n_calls += 1
-                if 'EXECUTE' in response:
+                if response is not None and 'EXECUTE' in response:
                     if replan_idx > 0 or all([v > 0 for v in num_responses.values()]):
                         dialog_done = True
                         break
@@ -245,43 +267,49 @@ Your response is:
  
         # response = "\n".join(response.split("EXECUTE")[1:])
         # print(response)  
+        # Handle case where all API calls failed and response is None
+        if response is None:
+            response = "API call failed - no response received"
         return agent_name, response, agent_responses
+
+    @staticmethod
+    def _is_responses_model(m: str) -> bool:
+        return m.startswith(("gpt-5", "gpt-4.1", "gpt-4o", "gpt-4", "claude-3"))
 
     def query_once(self, system_prompt, user_prompt, max_query):
         response = None
-        usage = None   
-        # print('======= system prompt ======= \n ', system_prompt)
-        # print('======= user prompt ======= \n ', user_prompt)
-
-        if self.debug_mode: 
-            response = "EXECUTE\n"
-            for aname in self.robot_agent_names:
-                action = input(f"Enter action for {aname}:\n")
-                response += f"NAME {aname} ACTION {action}\n"
-            return response, dict()
+        usage = None
 
         for n in range(max_query):
-            print('querying {}th time'.format(n))
+            print(f'querying {n}th time')
             try:
-                response = openai.ChatCompletion.create(
-                    model=self.llm_source, 
+                kwargs = dict(
+                    model=self.llm_source,
                     messages=[
-                        # {"role": "user", "content": ""},
-                        {"role": "system", "content": system_prompt+user_prompt},                                    
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_prompt},
                     ],
-                    max_tokens=self.max_tokens,
-                    temperature=self.temperature,
-                    )
-                usage = response['usage']
-                response = response['choices'][0]['message']["content"]
-                print('======= response ======= \n ', response)
-                print('======= usage ======= \n ', usage)
+                )
+
+                if self._is_responses_model(self.llm_source):
+                    kwargs["max_completion_tokens"] = self.max_tokens
+                    # Don't set temperature for responses models - they use default
+                else:
+                    kwargs["max_tokens"] = self.max_tokens
+                    kwargs["temperature"] = self.temperature
+
+                response_obj = openai_client.chat.completions.create(**kwargs)
+                usage = response_obj.usage
+                response = response_obj.choices[0].message.content
+                print('======= response ======= \n', response)
+                print('======= usage ======= \n', usage)
                 break
-            except:
-                print("API error, try again")
-            continue
-        # breakpoint()
+            except Exception as e:
+                print(f"API error: {e}, try again")
+                continue
+
         return response, usage
+
     
     def post_execute_update(self, obs_desp: str, execute_success: bool, parsed_plan: str):
         if execute_success: 

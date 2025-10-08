@@ -137,18 +137,18 @@ class SimAction:
     def _validate_vals(cls, v):
         if v is None:
             return []  
-        assert isinstance(v, List) or isinstance(v, np.ndarray), f"Invalid idxs, got {type(v)}"
-        if len(v) > 0:
-            assert all([isinstance(i, np.float32) for i in v]), f"Invalid value, got {type(v)}"
+        if isinstance(v, np.ndarray):
+            return v.tolist()
+        assert isinstance(v, List), f"Invalid idxs, got {type(v)}"
         return v 
 
     @validator("ctrl_idxs", "qpos_idxs")
     def _validate_idxs(cls, v):
         if v is None:
             return [] 
-        assert isinstance(v, List) or isinstance(v, np.ndarray), f"Invalid idxs, got {type(v)}"
-        if len(v) > 0:
-            assert all([isinstance(i, np.int32) for i in v]), f"Invalid idx, got {type(v)}"
+        if isinstance(v, np.ndarray):
+            return v.tolist()
+        assert isinstance(v, List), f"Invalid idxs, got {type(v)}"
         return v
 
     def __post_init__(self):
@@ -497,7 +497,7 @@ class MujocoSimEnv:
             ret[obj2.name].add(obj1.name)
             ret[obj2.name].add(body1.name) 
         # also check eq_active
-        active = model.eq_active 
+        active = model.eq_active0 
         nbody = model.nbody
         for i in range(len(active)):
             if active[i]:
@@ -655,7 +655,7 @@ class MujocoSimEnv:
             # _dict = self.convert_named_data_to_dict(attr_name)
             # kwargs.update(_dict)
             kwargs[attr_name] = deepcopy(getattr(self.ndata, attr_name)) # NOTE: use deepcopy!!
-        kwargs['eq_active'] = deepcopy(self.physics.model.eq_active)
+        kwargs['eq_active'] = deepcopy(self.physics.model.eq_active0)
         kwargs['body_pos'] = deepcopy(self.physics.model.body_pos)
         kwargs['body_quat'] = deepcopy(self.physics.model.body_quat)
         save_data = SimSaveData(**kwargs)
@@ -664,11 +664,11 @@ class MujocoSimEnv:
 
     def load_saved_state(self, data: SimSaveData) -> None:
         qpos = data.qpos
-        eq_active = data.eq_active
+        eq_active = data.eq_active0
         self.physics.data.qpos[:] = qpos
         self.physics.data.qvel[:] = data.qvel
         self.physics.data.ctrl[:] = data.ctrl
-        self.physics.model.eq_active[:] = eq_active
+        self.physics.model.eq_active0[:] = eq_active
         self.physics.model.body_pos[:] = data.body_pos
         self.physics.model.body_quat[:] = data.body_quat
         self.physics.forward() 
@@ -690,7 +690,7 @@ class MujocoSimEnv:
             self.data.ctrl[ctrl_idxs] = ctrl_vals 
 
             if eq_active_idxs is not None and len(eq_active_idxs) > 0:
-                self.physics.model.eq_active[eq_active_idxs] = eq_active_vals
+                self.physics.model.eq_active0[eq_active_idxs] = eq_active_vals
             self.physics.step() 
             if step % self.render_freq == 0:
                 self.render_all_cameras()

@@ -1,8 +1,15 @@
 from typing import List
 from real_world.real_env import RealEnv, EnvState
 import openai
+import json
+import os
 from .feedback import FeedbackManager
 from .parser import LLMResponseParser
+
+# Initialize OpenAI client for v2.x
+assert os.path.exists("openai_key.json"), "Please put your OpenAI API key in a string in robot-collab/openai_key.json"
+OPENAI_KEY = str(json.load(open("openai_key.json")))
+openai_client = openai.OpenAI(api_key=OPENAI_KEY)
  
 class DialogPrompter:
     """
@@ -19,7 +26,7 @@ class DialogPrompter:
         use_history: bool = True,  
         use_feedback: bool = True,
         temperature: float = 0,
-        llm_source: str = "gpt-4"
+        llm_source: str = "gpt-5-mini"
     ):
         self.max_tokens = max_tokens
         self.use_history = use_history
@@ -36,7 +43,8 @@ class DialogPrompter:
         self.max_calls_per_round = max_calls_per_round 
         self.temperature = temperature
         self.llm_source = llm_source
-        assert llm_source in ["gpt-4", "gpt-3.5-turbo", "claude"], f"llm_source must be one of [gpt4, gpt-3.5-turbo, claude], got {llm_source}"
+        assert llm_source in ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1",
+                      "gpt4", "gpt-3.5-turbo", "claude"], f"llm_source must be one of [gpt-5, gpt-5-mini, gpt-5-nano, gpt-4.1, gpt4, gpt-3.5-turbo, claude], got {llm_source}"
 
     def compose_system_prompt(
         self, 
@@ -161,14 +169,21 @@ Your response is:
                 
                 num_responses[agent_name] += 1
                 # strip all the repeated \n and blank spaces in response: 
-                pruned_response = response.strip()
-                # pruned_response = pruned_response.replace("\n", " ")
-                agent_responses.append(
-                    f"[{agent_name}]:\n{pruned_response}"
-                    )
+                if response is not None:
+                    pruned_response = response.strip()
+                    # pruned_response = pruned_response.replace("\n", " ")
+                    agent_responses.append(
+                        f"[{agent_name}]:\n{pruned_response}"
+                        )
+                else:
+                    # Handle case where API calls failed and response is None
+                    pruned_response = "API call failed - no response received"
+                    agent_responses.append(
+                        f"[{agent_name}]:\n{pruned_response}"
+                        )
                 usages.append(usage)
                 n_calls += 1
-                if 'EXECUTE' in response and 'NAME Bob' in response and 'NAME Alice' in response:
+                if response is not None and 'EXECUTE' in response and 'NAME Bob' in response and 'NAME Alice' in response:
                     print("EXECUTE detected, dialog done")
                     if replan_idx > 0 or all([v > 0 for v in num_responses.values()]):
                         dialog_done = True
@@ -179,6 +194,9 @@ Your response is:
  
         # response = "\n".join(response.split("EXECUTE")[1:])
         # print(response)  
+        # Handle case where all API calls failed and response is None
+        if response is None:
+            response = "API call failed - no response received"
         return agent_name, response, agent_responses
 
     def query_once(self, system_prompt, user_prompt, max_query):
@@ -190,7 +208,8 @@ Your response is:
         for n in range(max_query):
             print('querying {}th time'.format(n))
             try:
-                response = openai.ChatCompletion.create(
+
+                """ response = openai.ChatCompletion.create(
                     model=self.llm_source, 
                     messages=[
                         # {"role": "user", "content": ""},
@@ -198,9 +217,29 @@ Your response is:
                     ],
                     max_tokens=self.max_tokens,
                     temperature=self.temperature,
-                    )
-                usage = response['usage']
-                response = response['choices'][0]['message']["content"]
+                    ) """
+                def _is_responses_model(m: str) -> bool:
+
+                    return m.startswith(("gpt-5", "gpt-4.1", "gpt-4o"))
+
+                kwargs = dict(
+                    model=self.llm_source,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=self.temperature,
+                )
+
+                if _is_responses_model(self.llm_source):
+                    kwargs["max_completion_tokens"] = self.max_tokens
+                else:
+                    kwargs["max_tokens"] = self.max_tokens
+
+                response = openai_client.chat.completions.create(**kwargs)
+
+                usage = response.usage
+                response = response.choices[0].message.content
                 print('======= response ======= \n ', response)
                 print('======= usage ======= \n ', usage)
                 break

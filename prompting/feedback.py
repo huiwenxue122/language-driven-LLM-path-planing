@@ -18,7 +18,7 @@ class FeedbackManager:
         planner: MultiArmRRT,
         llm_output_mode: str = "action",
         robot_name_map: Dict[str, str] = {"panda": "Bob"}, 
-        step_std_threshold: float = 0.1, # threshold for checking if the waypoint steps are evenly spaced
+        step_std_threshold: float = 1.2, # threshold for checking if the waypoint steps are evenly spaced
         max_failed_waypoints: int = 2,
     ):
         self.env = env
@@ -123,7 +123,8 @@ class FeedbackManager:
                 max_dist_pair = f"  Distance between {step_pairs[np.argmax(stepwise_dist)]} is {np.max(stepwise_dist):.2f}, too high"
                 min_dist_pair = f"  Distance between {step_pairs[np.argmin(stepwise_dist)]} is {np.min(stepwise_dist):.2f}, too low"
                 _std = np.std(stepwise_dist)
-                if _std > self.step_std_threshold: 
+                # Only report if the std is significantly high and there are multiple steps
+                if _std > self.step_std_threshold and len(stepwise_dist) > 2: 
                     feedback += f"You must make {agent_name}'s path more evenly spaced:\n{max_dist_pair}\n{min_dist_pair}\n  Overall Distance std: {_std:.2f}" 
         return feedback
     

@@ -39,14 +39,30 @@ SANDWICH_ACTION_SPACE="""
 2) PUT <obj1> <obj2>. <obj1> can be one of the foods. <obj2> can be food, cutting_board, or table.
 3) WAIT, do nothing.
 Only one robot can PUT each round. You must PICK up an item before PUT. 
+
 [Action Output Instruction]
 Must first output 'EXECUTE\n', then give exactly one action per robot, put each on a new line.
+
+CRITICAL REQUIREMENTS:
+- The final EXECUTE plan must include exactly one action for Chad AND exactly one action for Dave
+- Both robots must have actions in the final plan
+- Do not output EXECUTE until both robots have agreed on their actions
+
 Example#1: 'EXECUTE\nNAME Chad ACTION PUT bread_slice1 cutting_board\nNAME Dave ACTION PICK tomato\n'
 Example#2: 'EXECUTE\nNAME Chad ACTION WAIT\nNAME Dave ACTION PUT cheese tomato\n'
 """
 
 SANDWICH_CHAT_PROMPT="""The robots discuss before taking actions. Carefully consider environment feedback and others' responses, and coordinate to strictly follow the sandwich recipe and avoid collision.
-They talk in order [Chad],[Dave],[Chad],..., after reaching agreement, they output a plan with **exactly** one ACTION per robot, and stop talking. Their chat and final plan are: """
+They talk in order [Chad],[Dave],[Chad],..., after reaching agreement, they output a plan with **exactly** one ACTION per robot, and stop talking. 
+
+CRITICAL REQUIREMENTS:
+- The final EXECUTE plan must include exactly one action for Chad AND exactly one action for Dave
+- Both robots must have actions in the final plan
+- If a robot has no specific action, use WAIT
+- Do not output EXECUTE until both robots have agreed on their actions
+- Example: EXECUTE\nNAME Chad ACTION PICK bread_slice1\nNAME Dave ACTION WAIT
+
+Their chat and final plan are: """
 
 SANDWICH_PLAN_PROMPT="""
 Plan one ACTION for each robot at every round. The robot ACTIONs must strictly follow the sandwich recipe and avoid collision.
@@ -392,6 +408,15 @@ End your response by either: 1) output PROCEED, if the plans require further dis
                 if len(objects) == 2:
                     obj1 = objects[0]
                     obj2 = objects[1]
+                    
+                    # Check if robot is actually holding the object
+                    robot_name = self.get_robot_name(agent_name)
+                    robot_state = getattr(obs, robot_name)
+                    contacts = robot_state.contacts
+                    if obj1 not in contacts:
+                        task_feedback += f"Object {obj1} cannot be PUT down, robot {agent_name} is not in contact with it.\n"
+                        continue
+                    
                     if obj1 not in self.recipe_order:
                         task_feedback += f"{obj1} is not in the recipe\n"
                     elif obj2 == "table":
@@ -421,6 +446,15 @@ End your response by either: 1) output PROCEED, if the plans require further dis
         if all(['PUT' in action_str for action_str in llm_plan.action_strs.values()]):
             task_feedback += "only one robot can PUT at a time\n"
         
+        # Add helpful status information
+        for agent_name, action_str in llm_plan.action_strs.items():
+            robot_name = self.get_robot_name(agent_name)
+            robot_state = getattr(obs, robot_name)
+            contacts = robot_state.contacts
+            if contacts:
+                task_feedback += f"{agent_name} is currently holding: {', '.join(contacts)}\n"
+            else:
+                task_feedback += f"{agent_name} is not holding anything\n"
         
         return task_feedback
     
@@ -437,6 +471,12 @@ Both robots can PICK food items, or PUT an item atop something; only one robot c
 At each round, given [Scene description] and [Environment feedback], use it to reason about the task and improve plans.
         """
         return context
+
+    def get_robot_name(self, agent_name):
+        return self.robot_name_map_inv[agent_name]
+    
+    def get_agent_name(self, robot_name):
+        return self.robot_name_map[robot_name]
 
     def get_contact(self):
         contacts = super().get_contact()

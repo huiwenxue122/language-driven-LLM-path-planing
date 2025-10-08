@@ -3,7 +3,7 @@ import os
 import io
 import numpy as np 
 from itertools import product
-from pydantic import dataclasses, validator
+from pydantic import dataclasses, field_validator
 from transforms3d import affines, quaternions, euler
 from typing import Dict, List, Optional, Sequence, Tuple
 import matplotlib.pyplot as plt 
@@ -27,7 +27,7 @@ class Pose:
     def __hash__(self) -> int:
         return hash((*self.position.tolist(), *self.orientation.tolist()))
 
-    @validator("position")
+    @field_validator("position")
     @classmethod
     def position_shape(cls, v: np.ndarray):
         if v.shape != (3,):
@@ -47,7 +47,7 @@ class Pose:
     def pos_string(self):
         return f"({self.x:.2f}, {self.y:.2f}, {self.z:.2f})"
 
-    @validator("orientation")
+    @field_validator("orientation")
     @classmethod
     def orientation_shape(cls, v: np.ndarray):
         if v.shape != (4,):
@@ -206,7 +206,7 @@ class PointCloud:
     segmentation_pts: Dict[str, np.ndarray]
     xyz_pts: np.ndarray
 
-    @validator("rgb_pts")
+    @field_validator("rgb_pts")
     @classmethod
     def rgb_dtype(cls, rgb_pts: np.ndarray):
         if (
@@ -221,7 +221,7 @@ class PointCloud:
         else:
             raise ValueError(f"`rgb_pts` in unexpected format: dtype {rgb_pts.dtype}")
 
-    @validator("segmentation_pts")
+    @field_validator("segmentation_pts")
     @classmethod
     def segmentation_pts_shape(cls, v: Dict[str, np.ndarray]):
         for pts in v.values():
@@ -229,16 +229,17 @@ class PointCloud:
                 raise ValueError(f"points.shape should N, but got {pts.shape}")
         return v
 
-    @validator("xyz_pts")
+    @field_validator("xyz_pts")
     @classmethod
     def xyz_pts_shape(cls, v: np.ndarray):
         if len(v.shape) != 2 or v.shape[1] != 3:
             raise ValueError("points should be Nx3")
         return v
 
-    @validator("xyz_pts")
+    @field_validator("xyz_pts")
     @classmethod
-    def same_len(cls, v: np.ndarray, values, field, config):
+    def same_len(cls, v: np.ndarray, info):
+        values = info.data
         if "rgb_pts" in values and len(values["rgb_pts"]) != len(v):
             raise ValueError("`len(rgb_pts) != len(xyz_pts)`")
         if "segmentation_pts" in values and not all(
@@ -387,14 +388,14 @@ class VisionSensorOutput:
     fov: float
     segmentation: Optional[Dict[str, np.ndarray]] = None
 
-    @validator("depth")
+    @field_validator("depth")
     @classmethod
     def depth_shape(cls, v: np.ndarray):
         if v is not None and len(v.shape) != 2:
             raise ValueError("depth images should be HxW")
         return v
 
-    @validator("rgb")
+    @field_validator("rgb")
     @classmethod
     def rgb_shape(cls, v: np.ndarray):
         if v.dtype == np.float32:
@@ -409,7 +410,7 @@ class VisionSensorOutput:
             raise ValueError("rgb images should be HxWx4")
         return v
 
-    @validator("rot_mat")
+    @field_validator("rot_mat")
     @classmethod
     def check_rot_mat(cls, v: np.ndarray):
         if v.shape != (3, 3):

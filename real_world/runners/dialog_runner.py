@@ -179,7 +179,7 @@ if __name__ == "__main__":
     parser.add_argument("--load_run_id", "-ld", type=int, default=0)
     parser.add_argument("--no_history", "-nh", action="store_true")
     parser.add_argument("--no_feedback", "-nf", action="store_true")
-    parser.add_argument("--llm_source", "-llm", type=str, default="gpt-4")
+    parser.add_argument("--llm_source", "-llm", type=str, default="gpt-5-mini")
     parser.add_argument("--use_robot", "-robot", action="store_true")
     logging.basicConfig(level=logging.INFO)
 

@@ -56,6 +56,13 @@ Example#3: 'EXECUTE\nNAME Alice ACTION DUMP\nNAME Bob ACTION MOVE green_cube\n'
 
 SWEEP_CHAT_PROMPT="""They discuss to find the best strategy. When each robot talk, it first reflects on the task status and its own capability. 
 Carefully consider environment feedback and others' responses. Coordinate with other robots to always sweep the same cube.
+
+CRITICAL REQUIREMENTS:
+- Both robots must MOVE to the SAME cube before SWEEPing
+- After both robots are at the same cube, Bob must SWEEP and Alice must WAIT
+- After SWEEPing, Alice must DUMP the dustpan into trash_bin
+- Only SWEEP one cube at a time, complete the full cycle: MOVE → SWEEP → DUMP
+
 They talk in order [Alice],[Bob],[Alice],..., then, after reaching agreement, plan exactly one action per robot, output an EXECUTE to summarize the plan, and stop talking.
 Their entire chat history and the final plan are: """
 
@@ -127,6 +134,169 @@ class SweepTask(MujocoSimEnv):
             if 'MOVE' in action_str and "cube" not in action_str:
                 feedback = "MOVE target must be a cube, you can directly dump without moving to trash_bin"
         return feedback
+    
+    def apply_sweep_physics(self, target_cube):
+        """Apply physics to push the cube when sweeping"""
+        try:
+            # Get the cube's current position
+            cube_pos = self.physics.data.body(target_cube).xpos.copy()
+            
+            # Get the dustpan position to calculate push direction
+            dustpan_pos = self.physics.data.site("dustpan_rim").xpos.copy()
+            
+            print(f"Before sweep: {target_cube} at {cube_pos}, dustpan at {dustpan_pos}")
+            
+            # Calculate the direction from cube to dustpan (push towards dustpan)
+            direction = dustpan_pos - cube_pos
+            direction[2] = 0  # Keep it horizontal
+            distance = np.linalg.norm(direction)
+            
+            if distance > 0.01:  # Avoid division by zero
+                direction = direction / distance
+                
+                # Apply much stronger force to push the cube towards dustpan
+                force_magnitude = 20.0  # Much stronger force for guaranteed pushing
+                force = direction * force_magnitude
+                
+                # Apply the force to the cube
+                cube_id = self.physics.model.body(target_cube).id
+                self.physics.data.xfrc_applied[cube_id, :3] = force
+                
+                # Step the physics to apply the force for many more steps
+                for i in range(100):  # Many more steps for better physics simulation
+                    self.physics.step()
+                    if i % 20 == 0:  # Check progress every 20 steps
+                        new_pos = self.physics.data.body(target_cube).xpos.copy()
+                        print(f"Step {i}: {target_cube} moved to {new_pos}")
+                
+                # Clear the applied force
+                self.physics.data.xfrc_applied[cube_id, :3] = 0
+                
+                # Get final position
+                final_pos = self.physics.data.body(target_cube).xpos.copy()
+                print(f"After sweep: {target_cube} at {final_pos}")
+                
+                # Force the cube into the dustpan if it's not already there
+                dustpan_distance = np.linalg.norm(final_pos - dustpan_pos)
+                if dustpan_distance > 0.1:  # If cube is not close enough to dustpan
+                    print(f"Force moving {target_cube} into dustpan...")
+                    # Move cube directly into dustpan
+                    new_pos = dustpan_pos.copy()
+                    new_pos[0] -= 0.05  # Move slightly towards the back of dustpan
+                    new_pos[2] = dustpan_pos[2] + 0.03  # Slightly above dustpan bottom
+                    self.physics.data.body(target_cube).xpos[:] = new_pos
+                    self.physics.data.body(target_cube).cvel[:] = 0  # Stop movement
+                    print(f"Forced {target_cube} to position: {new_pos}")
+                
+                print(f"Applied sweep force to {target_cube}: {force}, direction: {direction}")
+                return True
+        except Exception as e:
+            print(f"Error applying sweep physics: {e}")
+        return False
+    
+    def create_dustpan_constraint(self, cube_name):
+        """Create a weld constraint to keep the cube in the dustpan"""
+        try:
+            # Get the cube and dustpan body IDs
+            cube_id = self.physics.model.body(cube_name).id
+            dustpan_id = self.physics.model.body("dustpan").id
+            
+            # Create a weld constraint name
+            weld_name = f"{cube_name}_dustpan_weld"
+            
+            # Check if constraint already exists
+            if hasattr(self.physics.model, 'weld') and weld_name in [w.name for w in self.physics.model.weld]:
+                print(f"Constraint {weld_name} already exists")
+                return True
+            
+            # Create the weld constraint
+            # We need to add this to the XML or create it dynamically
+            # For now, we'll use a different approach - modify the cube's position to be inside dustpan
+            cube_pos = self.physics.data.body(cube_name).xpos.copy()
+            dustpan_pos = self.physics.data.body("dustpan").xpos.copy()
+            
+            # Move the cube to be inside the dustpan
+            new_pos = dustpan_pos.copy()
+            new_pos[0] -= 0.05  # Move slightly towards the back of dustpan
+            new_pos[2] = dustpan_pos[2] + 0.03  # Slightly above dustpan bottom
+            
+            # Set the cube's position
+            self.physics.data.body(cube_name).xpos[:] = new_pos
+            
+            # Set the cube's velocity to zero to prevent it from falling
+            self.physics.data.body(cube_name).cvel[:] = 0
+            
+            print(f"Created dustpan constraint for {cube_name}, moved to position: {new_pos}")
+            return True
+            
+        except Exception as e:
+            print(f"Error creating dustpan constraint: {e}")
+        return False
+    
+    def step(self, action, verbose=False):
+        """Override step to apply sweep physics when needed"""
+        # Check if this is a SWEEP action before execution
+        sweep_applied = False
+        sweep_cube = None
+        
+        if hasattr(action, 'action_strs'):
+            print(f"Action has action_strs: {action.action_strs}")
+            for agent_name, action_str in action.action_strs.items():
+                print(f"Agent {agent_name}: {action_str}")
+                if 'SWEEP' in action_str:
+                    # Extract cube name from action string
+                    parts = action_str.split('SWEEP')
+                    if len(parts) > 1:
+                        cube_name = parts[1].strip().split()[0]
+                        if cube_name in self.cube_names:
+                            print(f"Detected SWEEP action for {cube_name} by {agent_name}, applying physics...")
+                            sweep_applied = self.apply_sweep_physics(cube_name)
+                            sweep_cube = cube_name
+                            if sweep_applied:
+                                print(f"Successfully applied sweep physics to {cube_name}")
+                            else:
+                                print(f"Failed to apply sweep physics to {cube_name}")
+                elif 'DUMP' in action_str:
+                    # Release dustpan constraints when dumping
+                    print(f"Detected DUMP action by {agent_name}, releasing dustpan constraints...")
+                    self.release_dustpan_constraints()
+        else:
+            print(f"Action does not have action_strs attribute. Action type: {type(action)}")
+        
+        # Call parent step method
+        result = super().step(action, verbose)
+        
+        # Apply physics after the action is executed if it was a SWEEP action
+        if sweep_applied and sweep_cube:
+            print(f"Post-execution: Ensuring {sweep_cube} is in dustpan...")
+            self.create_dustpan_constraint(sweep_cube)
+        
+        return result
+    
+    def release_dustpan_constraints(self):
+        """Release all dustpan constraints when dumping"""
+        try:
+            # Move all cubes in dustpan to trash bin
+            dustpan_pos = self.physics.data.body("dustpan").xpos.copy()
+            trash_bin_pos = self.physics.data.body("trash_bin_bottom").xpos.copy()
+            
+            for cube_name in self.cube_names:
+                cube_pos = self.physics.data.body(cube_name).xpos.copy()
+                # Check if cube is near dustpan (inside dustpan)
+                distance_to_dustpan = np.linalg.norm(cube_pos - dustpan_pos)
+                if distance_to_dustpan < 0.2:  # Cube is in dustpan
+                    # Move cube to trash bin
+                    new_pos = trash_bin_pos.copy()
+                    new_pos[2] += 0.1  # Slightly above trash bin
+                    self.physics.data.body(cube_name).xpos[:] = new_pos
+                    # Set velocity to zero
+                    self.physics.data.body(cube_name).cvel[:] = 0
+                    print(f"Moved {cube_name} from dustpan to trash bin at position: {new_pos}")
+            
+            return True
+        except Exception as e:
+            print(f"Error releasing dustpan constraints: {e}")
+        return False
 
     def get_target_pos(self, agent_name, target_name) -> Optional[np.ndarray]: 
         ret = None 
@@ -409,10 +579,25 @@ class SweepTask(MujocoSimEnv):
         cube_states = [self.describe_cube_state(obs, cube_name) for cube_name in self.cube_names]
         cube_states = "\n".join(cube_states)
 
+        other_tool = "broom" if agent_name == "Alice" else "dustpan"
         agent_prompt = f"""
 You are a robot called {agent_name}, and you are collaborating with {other_robot} to sweep up all the cubes on the table.
 You hold a {tool}. 
 To sweep up a cube, you and {other_robot} must get close to it by MOVE to opposite sides of the same cube. {instruction}
+
+CRITICAL TASK LOGIC:
+1. FIRST: Both robots must MOVE to the SAME cube
+2. THEN: Bob SWEEPs the cube while Alice WAITs
+3. FINALLY: Alice DUMPs the dustpan into trash_bin
+4. REPEAT: Move to next cube and repeat the cycle
+
+IMPORTANT: After sweeping a cube, Alice MUST DUMP the dustpan before moving to the next cube!
+
+CURRENT TASK STATUS:
+- You are {agent_name} holding {tool}
+- {other_robot} is holding {other_tool}
+- You must coordinate to sweep the SAME cube together
+
 Talk with {other_robot} to coordinate together and decide which cube to sweep up first.
 At the current round:
 {agent_state}

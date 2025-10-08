@@ -59,13 +59,13 @@ class SingleThreadPrompter:
         feedback_manager: FeedbackManager,
         comm_mode: str = "plan", # or chat
         use_waypoints: bool = False,
-        use_history: bool = True,
+        use_history: bool = False,
         max_api_queries: int = 3,
         num_replans: int = 3,
         debug_mode: bool = False,   
         temperature: float = 0,
-        max_tokens: int = 1000, 
-        llm_source: str = "gpt-4",
+        max_tokens: int = 300, 
+        llm_source: str = "gpt-5-mini",
     ):
         self.env = env 
         self.robot_agent_names = env.get_sim_robots().keys()
@@ -222,41 +222,44 @@ Re-format to strictly follow [Action Output Instruction]!
         self.response_history = response_history
         return ready_to_execute, llm_plans, plan_feedbacks, response_history
 
+    def _is_responses_model(m: str) -> bool:
+        return m.startswith(("gpt-5", "gpt-4.1", "gpt-4o"))
 
     def query_once(self, system_prompt, user_prompt=""):
         response = None
-        usage = None   
-        # print('======= system prompt ======= \n ', system_prompt)
-        if self.debug_mode: # query human user input
-            response = "EXECUTE\n"
-            for aname in self.robot_agent_names:
-                action = input(f"Enter action for {aname}:\n")
-                response += f"NAME {aname} ACTION {action}\n"
-            return response, dict()
+        usage = None
 
         for n in range(self.max_api_queries):
-            print('querying {}th time'.format(n))
+            print(f'querying {n}th time')
             try:
-                response = openai.ChatCompletion.create(
+                kwargs = dict(
                     model=self.llm_source,
                     messages=[
-                        # {"role": "user", "content": user_prompt},
-                        {"role": "system", "content": system_prompt},                                    
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_prompt},
                     ],
-                    max_tokens=self.max_tokens,
-                    temperature=self.temperature, 
-                    )
-                usage = response['usage']
-                response = response['choices'][0]['message']["content"]
-                print('======= response ======= \n ', response)
-                print('======= usage ======= \n ', usage)
+                )
+
+                if self._is_responses_model(self.llm_source):
+                    # For responses models: use max_completion_tokens, do not pass temperature
+                    kwargs["max_completion_tokens"] = self.max_tokens
+                else:
+                    # For old models: use max_tokens and temperature
+                    kwargs["max_tokens"] = self.max_tokens
+                    kwargs["temperature"] = self.temperature
+
+                response_obj = openai.ChatCompletion.create(**kwargs)
+                usage = response_obj["usage"]
+                response = response_obj["choices"][0]["message"]["content"]
+                print('======= response ======= \n', response)
+                print('======= usage ======= \n', usage)
                 break
-            except:
+            except Exception as e:
                 print("API error, try again")
-            continue
+                continue
+
         return response, usage
 
-    
 
     def post_execute_update(self, obs_desp: str, execute_success: bool, parsed_plan: str):
         if execute_success: 
