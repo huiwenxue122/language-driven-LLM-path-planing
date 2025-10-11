@@ -68,11 +68,14 @@ def main():
     ax.set_xlabel('X (m)')
     ax.set_ylabel('Y (m)')
     
-    # 绘制障碍物
+    # 绘制障碍物 - 匹配新的room.xml布局
     obstacles = [
-        {'pos': (-1.0, 0.0), 'size': (0.4, 0.2), 'color': 'red'},
-        {'pos': (1.2, -1.0), 'size': (0.3, 0.3), 'color': 'blue'},
-        {'pos': (1.5, 1.2), 'size': (0.5, 0.2), 'color': 'green'},
+        {'pos': (-2.0, 2.2), 'size': (0.3, 0.6), 'color': 'orange'},  # obst_top_left
+        {'pos': (2.5, 2.2), 'size': (0.3, 0.6), 'color': 'orange'},   # obst_top_right
+        {'pos': (0.5, 0.0), 'size': (0.2, 1.0), 'color': 'orange'},   # obst_midcol
+        {'pos': (-1.5, -0.5), 'size': (1.0, 0.2), 'color': 'orange'}, # obst_left_bar
+        {'pos': (1.5, -1.0), 'size': (1.0, 0.2), 'color': 'orange'},  # obst_right_bar
+        {'pos': (0.0, -2.0), 'size': (0.8, 0.3), 'color': 'orange'},  # obst_bottom
     ]
     
     for obs in obstacles:
@@ -83,9 +86,9 @@ def main():
         )
         ax.add_patch(rect)
     
-    # 绘制目标点
-    ax.scatter(3.0, -2.0, color='green', s=200, marker='*', label='Alice目标')
-    ax.scatter(3.0, 2.0, color='orange', s=200, marker='*', label='Bob目标')
+    # 绘制目标点 - 匹配新的room.xml布局
+    ax.scatter(3.0, 1.6, color='blue', s=200, marker='*', label='Alice目标')
+    ax.scatter(3.2, -1.0, color='green', s=200, marker='*', label='Bob目标')
     
     # 初始化轨迹线
     alice_line, = ax.plot([], [], 'b-', linewidth=2, label='Alice轨迹')

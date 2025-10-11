@@ -1,4 +1,4 @@
-<mujoco model="nav_room">
+<mujoco model="nav_room_v4">
   <option timestep="0.01" gravity="0 0 -9.81"/>
   <visual>
     <map znear="0.01" zfar="50"/>
@@ -8,31 +8,44 @@
     <!-- 地板 -->
     <geom name="floor" type="plane" size="5 5 0.1" rgba="0.9 0.9 0.9 1"/>
 
-    <!-- 房间内墙（一个 8m x 6m 的矩形） -->
+    <!-- 内墙：8m x 6m -->
     <geom name="wall_n" type="box" pos="0 3 0.5"  size="4 0.05 0.5" rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1"/>
     <geom name="wall_s" type="box" pos="0 -3 0.5" size="4 0.05 0.5" rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1"/>
     <geom name="wall_e" type="box" pos="4 0 0.5"  size="0.05 3 0.5" rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1"/>
     <geom name="wall_w" type="box" pos="-4 0 0.5" size="0.05 3 0.5" rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1"/>
 
-    <!-- 障碍物（命名以 obst_ 开头方便解析） -->
-    <geom name="obst_1" type="box" pos="-1.0  0.0 0.25" size="0.4 0.2 0.25" rgba="0.6 0.2 0.2 1"/>
-    <geom name="obst_2" type="box" pos=" 1.2 -1.0 0.25" size="0.3 0.3 0.25" rgba="0.2 0.4 0.7 1"/>
-    <geom name="obst_3" type="box" pos=" 1.5  1.2 0.25" size="0.5 0.2 0.25" rgba="0.2 0.6 0.3 1"/>
+    <!-- 障碍物 - 调整后确保有可行路径 -->
+    <!-- 左上角障碍物 -->
+    <geom name="obst_top_left" type="box" pos="-2.0 2.2 0.25" size="0.3 0.6 0.25" rgba="0.95 0.75 0.1 1" contype="1" conaffinity="1"/>
+    
+    <!-- 右上角障碍物 -->
+    <geom name="obst_top_right" type="box" pos="2.5 2.2 0.25" size="0.3 0.6 0.25" rgba="0.95 0.75 0.1 1" contype="1" conaffinity="1"/>
+    
+    <!-- 中央垂直障碍物 -->
+    <geom name="obst_midcol" type="box" pos="0.5 0.0 0.25" size="0.2 1.0 0.25" rgba="0.95 0.75 0.1 1" contype="1" conaffinity="1"/>
+    
+    <!-- 左侧水平障碍物 -->
+    <geom name="obst_left_bar" type="box" pos="-1.5 -0.5 0.25" size="1.0 0.2 0.25" rgba="0.95 0.75 0.1 1" contype="1" conaffinity="1"/>
+    
+    <!-- 右侧水平障碍物 -->
+    <geom name="obst_right_bar" type="box" pos="1.5 -1.0 0.25" size="1.0 0.2 0.25" rgba="0.95 0.75 0.1 1" contype="1" conaffinity="1"/>
+    
+    <!-- 底部障碍物 -->
+    <geom name="obst_bottom" type="box" pos="0.0 -2.0 0.25" size="0.8 0.3 0.25" rgba="0.95 0.75 0.1 1" contype="1" conaffinity="1"/>
 
-    <!-- 机器人 Alice（自由体） -->
-    <body name="alice" pos="-2.5 -2.0 0.1">
+    <!-- 机器人 -->
+    <body name="alice" pos="-3.2 2.0 0.1">
       <freejoint/>
       <geom type="cylinder" size="0.12 0.1" rgba="0.05 0.55 1.0 1" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- 机器人 Bob（自由体） -->
-    <body name="bob" pos="-2.5  2.0 0.1">
+    <body name="bob" pos="-3.2 -2.3 0.1">
       <freejoint/>
-      <geom type="cylinder" size="0.12 0.1" rgba="1.0 0.45 0.05 1" contype="1" conaffinity="1"/>
+      <geom type="cylinder" size="0.12 0.1" rgba="0.1 0.9 0.1 1" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- 目标点（绿色 site，便于渲染/检查） -->
-    <site name="goal_a" pos="3.0 -2.0 0.05" size="0.12" rgba="0.1 0.9 0.1 1"/>
-    <site name="goal_b" pos="3.0  2.0 0.05" size="0.12" rgba="0.1 0.9 0.1 1"/>
+    <!-- 目标点 -->
+    <site name="goal_a" pos="3.0 1.6 0.05" size="0.12" rgba="0.05 0.55 1.0 1"/>
+    <site name="goal_b" pos="3.2 -1.0 0.05" size="0.12" rgba="0.1 0.9 0.1 1"/>
   </worldbody>
 </mujoco>
