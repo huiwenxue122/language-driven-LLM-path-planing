@@ -72,8 +72,10 @@ class EndToEndNavigationController:
         print(f"\n🗣️  Parsing user instruction: \"{user_text}\"")
         
         if self.use_offline_parser:
+            print("📝 Using offline parser (no GPT API call)")
             task_plan = llm_parse_instruction_offline(user_text)
         else:
+            print("🤖 Using GPT-4o API for instruction parsing...")
             task_plan = llm_parse_instruction(user_text)
         
         print(f"✅ Parsed plan:")

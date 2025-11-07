@@ -238,6 +238,7 @@ Example inputs and outputs:
 Output ONLY the JSON object, no additional text."""
 
     try:
+        print("🤖 Calling GPT-4o API...")
         # Call OpenAI API
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -250,27 +251,44 @@ Output ONLY the JSON object, no additional text."""
             response_format={"type": "json_object"}  # Enforce JSON output
         )
         
+        print("✅ GPT API call successful")
+        
         # Extract response text
         response_text = response.choices[0].message.content
+        print(f"📥 Raw response: {response_text[:200]}...")  # Show first 200 chars for debugging
         
         # Extract JSON from response
         json_data = _extract_json_from_response(response_text)
         
         if json_data is None:
-            print("⚠️  Warning: Failed to extract JSON from LLM response. Using fallback plan.")
+            print("❌ Error: Failed to extract JSON from LLM response.")
+            print(f"   Response text: {response_text}")
+            print("   Using fallback plan.")
             return _fallback_plan()
+        
+        print(f"📋 Extracted JSON: {json_data}")
         
         # Validate and parse using Pydantic
         try:
             task_plan = TaskPlan(**json_data)
-            print(f"✅ Successfully parsed instruction: {user_text}")
+            print(f"✅ Successfully parsed and validated instruction using GPT-4o")
+            print(f"   Agents: {[(a.id, a.goal) for a in task_plan.agents]}")
+            print(f"   Priority: {task_plan.priority}")
             return task_plan
         except ValidationError as e:
-            print(f"⚠️  Warning: Validation error: {e}. Using fallback plan.")
+            print(f"❌ Error: Pydantic validation failed for GPT response.")
+            print(f"   Validation error: {e}")
+            print(f"   Received JSON: {json_data}")
+            print("   Using fallback plan.")
             return _fallback_plan()
             
     except Exception as e:
-        print(f"⚠️  Warning: OpenAI API error: {e}. Using fallback plan.")
+        print(f"❌ Error: OpenAI API call failed.")
+        print(f"   Error type: {type(e).__name__}")
+        print(f"   Error message: {str(e)}")
+        print("   Using fallback plan.")
+        import traceback
+        traceback.print_exc()
         return _fallback_plan()
 
 
