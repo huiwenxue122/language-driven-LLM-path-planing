@@ -56,6 +56,7 @@ class AgentState:
     speed: float = 0.8    # m/s
     path_world: Optional[List[Tuple[float,float]]] = None
     path_ptr: int = 0
+    start_time: float = 0.0  # Time when agent should start moving (in seconds)
 
 class NavEnv:
     """
@@ -196,10 +197,18 @@ class NavEnv:
 
         return self._obs()
 
-    def step(self, dt: float = 0.02):
+    def step(self, dt: float = 0.02, current_time: float = 0.0, agent_delays: Optional[Dict[str, float]] = None):
         """
         让每个机器人沿路径前进；防止两机器人碰撞（最简：保持安全距离）
+        
+        Args:
+            dt: Time step in seconds
+            current_time: Current simulation time in seconds (for delay control)
+            agent_delays: Optional dict mapping agent names to delay times in seconds
         """
+        if agent_delays is None:
+            agent_delays = {}
+        
         # 简单防撞：如果距离过近，慢一点
         def safe_speed(a_xy, b_xy, base_spd):
             d = np.linalg.norm(np.array(a_xy) - np.array(b_xy))
@@ -212,6 +221,12 @@ class NavEnv:
             st = self.agents[name]
             cur = np.array(self._get_body_xy(name))
             goal = np.array(self.goal_xy[name])
+            
+            # Check if agent should wait (delay control)
+            delay = agent_delays.get(name, 0.0)
+            if current_time < delay:
+                # Agent should wait - don't move, keep at starting position
+                continue
             
             # 如果已经接近目标，直接移动到目标
             dist_to_goal = np.linalg.norm(cur - goal)

@@ -52,6 +52,7 @@ class AgentSpec(BaseModel):
     """
     id: str = Field(..., description="Agent identifier (e.g., 'A', 'B', 'alice', 'bob')")
     goal: List[float] = Field(..., description="Target position [x, y] in meters")
+    delay: float = Field(default=0.0, description="Delay in seconds before agent starts moving")
     
     def __init__(self, **data):
         """Custom init to validate goal length"""
@@ -74,7 +75,7 @@ class TaskPlan(BaseModel):
     
     Attributes:
         task: Task type, must be "navigation", "nav", or "pathfinding"
-        agents: List of agent specifications with their goals
+        agents: List of agent specifications with their goals and delays
         priority: Priority order list (e.g., ["A", "B"] means A plans first)
     """
     task: str = Field(
@@ -82,7 +83,7 @@ class TaskPlan(BaseModel):
         pattern=r"^(navigation|nav|pathfinding)$",
         description="Task type"
     )
-    agents: List[AgentSpec] = Field(..., description="List of agents with their goals")
+    agents: List[AgentSpec] = Field(..., description="List of agents with their goals and delays")
     priority: List[str] = Field(..., description="Priority order for path planning")
     
     def __init__(self, **data):
@@ -116,8 +117,8 @@ def _fallback_plan() -> TaskPlan:
     return TaskPlan(
         task="navigation",
         agents=[
-            AgentSpec(id="A", goal=[3.0, 2.0]),
-            AgentSpec(id="B", goal=[-2.0, 2.0])
+            AgentSpec(id="A", goal=[3.0, 2.0], delay=0.0),
+            AgentSpec(id="B", goal=[-2.0, 2.0], delay=0.0)
         ],
         priority=["A", "B"]
     )
@@ -200,8 +201,8 @@ Your task is to parse natural language instructions and output a JSON object wit
 {
     "task": "navigation",
     "agents": [
-        {"id": "A", "goal": [x, y]},
-        {"id": "B", "goal": [x, y]}
+        {"id": "A", "goal": [x, y], "delay": 0.0},
+        {"id": "B", "goal": [x, y], "delay": 0.0}
     ],
     "priority": ["A", "B"]
 }
@@ -209,10 +210,15 @@ Your task is to parse natural language instructions and output a JSON object wit
 Rules:
 1. Extract agent goals from the instruction (coordinates in meters)
 2. Determine priority order from the instruction (e.g., "A first" means ["A", "B"])
-3. Agent IDs can be "A", "B", "alice", "bob", etc.
-4. Goals must be [x, y] coordinates in world coordinates (meters)
-5. Priority list determines planning order (first agent plans first)
-6. Output ONLY valid JSON, no additional text or markdown
+3. Extract delay/wait times from the instruction:
+   - "wait for 5 minutes" → delay: 300.0 (convert minutes to seconds)
+   - "wait for 2 seconds" → delay: 2.0
+   - "depart first" or no delay mentioned → delay: 0.0
+4. Agent IDs can be "A", "B", "alice", "bob", etc.
+5. Goals must be [x, y] coordinates in world coordinates (meters)
+6. Priority list determines planning order (first agent plans first)
+7. Delay determines when each agent starts moving (in seconds)
+8. Output ONLY valid JSON, no additional text or markdown
 
 IMPORTANT - Environment Constraints:
 - Environment bounds: x ∈ [-4.0, 4.0], y ∈ [-3.0, 3.0]
@@ -222,13 +228,16 @@ IMPORTANT - Environment Constraints:
 
 Example inputs and outputs:
 - "Robot A go to (3, 2), Robot B go to (3.2, -1)" 
-  → {"task":"navigation","agents":[{"id":"A","goal":[3.0,2.0]},{"id":"B","goal":[3.2,-1.0]}],"priority":["A","B"]}
+  → {"task":"navigation","agents":[{"id":"A","goal":[3.0,2.0],"delay":0.0},{"id":"B","goal":[3.2,-1.0],"delay":0.0}],"priority":["A","B"]}
 
 - "Alice goes to position 3, 1.6. Bob goes to 3.2, -1. Alice has priority"
-  → {"task":"navigation","agents":[{"id":"alice","goal":[3.0,1.6]},{"id":"bob","goal":[3.2,-1.0]}],"priority":["alice","bob"]}
+  → {"task":"navigation","agents":[{"id":"alice","goal":[3.0,1.6],"delay":0.0},{"id":"bob","goal":[3.2,-1.0],"delay":0.0}],"priority":["alice","bob"]}
+
+- "one robot depart first, the other wait for 5 minutes to depart"
+  → {"task":"navigation","agents":[{"id":"A","goal":[3.0,1.6],"delay":0.0},{"id":"B","goal":[3.2,-1.0],"delay":300.0}],"priority":["A","B"]}
 
 - "both robots arrive their goals, A has priority" (no specific coordinates)
-  → {"task":"navigation","agents":[{"id":"A","goal":[3.0,1.6]},{"id":"B","goal":[3.2,-1.0]}],"priority":["A","B"]}
+  → {"task":"navigation","agents":[{"id":"A","goal":[3.0,1.6],"delay":0.0},{"id":"B","goal":[3.2,-1.0],"delay":0.0}],"priority":["A","B"]}
 """
 
     user_prompt = f"""Parse this navigation instruction and output the JSON plan:
@@ -336,7 +345,26 @@ def llm_parse_instruction_offline(user_text: str) -> TaskPlan:
             elif agent_id.lower() in ['b', 'bob']:
                 agent_id = 'B'
             
-            agents.append(AgentSpec(id=agent_id, goal=[x, y]))
+            # Extract delay if mentioned
+            delay = 0.0
+            # Look for delay patterns: "wait for X minutes/seconds", "delay X"
+            delay_patterns = [
+                r'wait\s+for\s+(\d+)\s+minutes?',
+                r'wait\s+for\s+(\d+)\s+seconds?',
+                r'delay\s+of\s+(\d+)\s+minutes?',
+                r'delay\s+of\s+(\d+)\s+seconds?',
+            ]
+            for delay_pattern in delay_patterns:
+                delay_match = re.search(delay_pattern, user_text, re.IGNORECASE)
+                if delay_match:
+                    delay_val = float(delay_match.group(1))
+                    if 'minute' in delay_match.group(0).lower():
+                        delay = delay_val * 60.0  # Convert minutes to seconds
+                    else:
+                        delay = delay_val
+                    break
+            
+            agents.append(AgentSpec(id=agent_id, goal=[x, y], delay=delay))
     
     # Extract priority order
     priority_patterns = [
@@ -359,9 +387,27 @@ def llm_parse_instruction_offline(user_text: str) -> TaskPlan:
         if any(keyword in user_text.lower() for keyword in ['goal', 'arrive', 'reach', 'target', 'destination']):
             # Use safe default positions on the right side (x > 2.0) to avoid obstacles
             print("⚠️  Warning: No specific coordinates found. Using safe default positions (right side).")
+            # Extract delay information
+            delay_a = 0.0
+            delay_b = 0.0
+            
+            # Check for delay patterns
+            if 'wait' in user_text.lower() or 'delay' in user_text.lower():
+                # Try to find which agent should wait
+                if 'first' in user_text.lower() or 'depart first' in user_text.lower():
+                    # The one that doesn't "depart first" should wait
+                    # Look for wait time
+                    wait_match = re.search(r'wait\s+for\s+(\d+)\s+(minutes?|seconds?)', user_text, re.IGNORECASE)
+                    if wait_match:
+                        wait_val = float(wait_match.group(1))
+                        if 'minute' in wait_match.group(2).lower():
+                            delay_b = wait_val * 60.0  # Convert to seconds
+                        else:
+                            delay_b = wait_val
+            
             agents = [
-                AgentSpec(id='A', goal=[3.0, 1.6]),  # Alice default (right side, upper)
-                AgentSpec(id='B', goal=[3.2, -1.0])   # Bob default (right side, lower)
+                AgentSpec(id='A', goal=[3.0, 1.6], delay=delay_a),  # Alice default (right side, upper)
+                AgentSpec(id='B', goal=[3.2, -1.0], delay=delay_b)   # Bob default (right side, lower)
             ]
         else:
             print("⚠️  Warning: Could not parse agents from instruction. Using fallback plan.")

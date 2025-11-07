@@ -80,29 +80,52 @@ class EndToEndNavigationController:
         
         print(f"✅ Parsed plan:")
         print(f"   Task: {task_plan.task}")
-        print(f"   Agents: {[(a.id, a.goal) for a in task_plan.agents]}")
+        print(f"   Agents: {[(a.id, a.goal, f'delay={a.delay}s') for a in task_plan.agents]}")
         print(f"   Priority: {task_plan.priority}")
         
         return task_plan
     
     def set_goals_from_plan(self, task_plan):
         """
-        Set agent goals in the environment based on parsed plan
+        Set agent goals and delays in the environment based on parsed plan
         
         Args:
             task_plan: TaskPlan object from LLM parser
         """
-        print("\n🎯 Setting agent goals...")
+        print("\n🎯 Setting agent goals and delays...")
         
         # Map LLM agent IDs to NavEnv agent names
         goal_mapping = {}
+        agent_delays = {}
         for agent_spec in task_plan.agents:
             nav_env_id = self.agent_id_map.get(agent_spec.id, agent_spec.id)
             goal_mapping[nav_env_id] = tuple(agent_spec.goal)  # Convert to tuple
+            agent_delays[nav_env_id] = agent_spec.delay  # Store delay
         
-        # Store goals for MAPF planning and execution
+        # Store goals and delays for MAPF planning and execution
         self.goal_mapping = goal_mapping
+        self.agent_delays = agent_delays
+        
         print(f"✅ Goals set: {goal_mapping}")
+        if any(d > 0 for d in agent_delays.values()):
+            print(f"⏱️  Delays: {agent_delays}")
+            for nav_id, delay in agent_delays.items():
+                if delay > 0:
+                    # For demo purposes, cap delays at 10 seconds (convert minutes to seconds for demo)
+                    if delay > 10.0:
+                        original_delay = delay
+                        # If delay is in minutes (>= 60), convert to demo seconds (1 minute = 1 second for demo)
+                        if delay >= 60.0:
+                            delay = delay / 60.0  # Convert minutes to seconds for demo
+                            if delay > 10.0:
+                                delay = 10.0  # Cap at 10 seconds for demo
+                            print(f"   {nav_id.capitalize()} will wait {delay:.1f} seconds (demo: {original_delay/60:.1f} min → {delay:.1f}s)")
+                        else:
+                            delay = min(delay, 10.0)  # Cap at 10 seconds
+                            print(f"   {nav_id.capitalize()} will wait {delay:.1f} seconds before starting")
+                        agent_delays[nav_id] = delay
+                    else:
+                        print(f"   {nav_id.capitalize()} will wait {delay:.1f} seconds before starting")
     
     def plan_paths_with_mapf(self, task_plan):
         """
@@ -360,12 +383,16 @@ class EndToEndNavigationController:
                     dt = 1.0 / fps
                     steps = int(T * fps)
                     
+                    # Track current simulation time
+                    current_time = 0.0
+                    
                     for step in range(steps):
                         if not viewer.is_running():
                             print("\n👋 Viewer closed by user")
                             break
                         
-                        obs, done = self.env.step(dt=dt)
+                        obs, done = self.env.step(dt=dt, current_time=current_time, agent_delays=self.agent_delays)
+                        current_time += dt
                         viewer.sync()
                         
                         if step % 30 == 0:
@@ -377,7 +404,13 @@ class EndToEndNavigationController:
                             alice_dist = np.linalg.norm(np.array(alice_pos) - np.array(alice_goal))
                             bob_dist = np.linalg.norm(np.array(bob_pos) - np.array(bob_goal))
                             
-                            print(f"   Step {step:3d}: Alice dist={alice_dist:.2f}m, Bob dist={bob_dist:.2f}m")
+                            # Show delay status
+                            alice_delay = self.agent_delays.get('alice', 0.0)
+                            bob_delay = self.agent_delays.get('bob', 0.0)
+                            alice_status = "⏸️ waiting" if current_time < alice_delay else "▶️ moving"
+                            bob_status = "⏸️ waiting" if current_time < bob_delay else "▶️ moving"
+                            
+                            print(f"   Step {step:3d} (t={current_time:.1f}s): Alice {alice_status} dist={alice_dist:.2f}m, Bob {bob_status} dist={bob_dist:.2f}m")
                         
                         if done:
                             print(f"\n✅ Task completed at step {step}!")
@@ -424,8 +457,12 @@ class EndToEndNavigationController:
         dt = 1.0 / fps
         steps = int(T * fps)
         
+        # Track current simulation time
+        current_time = 0.0
+        
         for step in range(steps):
-            obs, done = self.env.step(dt=dt)
+            obs, done = self.env.step(dt=dt, current_time=current_time, agent_delays=self.agent_delays)
+            current_time += dt
             
             if step % 30 == 0:
                 alice_pos = self.env._get_body_xy('alice')
@@ -436,7 +473,13 @@ class EndToEndNavigationController:
                 alice_dist = np.linalg.norm(np.array(alice_pos) - np.array(alice_goal))
                 bob_dist = np.linalg.norm(np.array(bob_pos) - np.array(bob_goal))
                 
-                print(f"   Step {step:3d}: Alice dist={alice_dist:.2f}m, Bob dist={bob_dist:.2f}m")
+                # Show delay status
+                alice_delay = self.agent_delays.get('alice', 0.0)
+                bob_delay = self.agent_delays.get('bob', 0.0)
+                alice_status = "⏸️ waiting" if current_time < alice_delay else "▶️ moving"
+                bob_status = "⏸️ waiting" if current_time < bob_delay else "▶️ moving"
+                
+                print(f"   Step {step:3d} (t={current_time:.1f}s): Alice {alice_status} dist={alice_dist:.2f}m, Bob {bob_status} dist={bob_dist:.2f}m")
             
             if done:
                 print(f"\n✅ Task completed at step {step}!")
